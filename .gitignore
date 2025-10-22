@@ -73,3 +73,11 @@ crashlytics-build.properties
 # Temporary auto-generated Android Assets
 /[Aa]ssets/[Ss]treamingAssets/aa.meta
 /[Aa]ssets/[Ss]treamingAssets/aa/*
+Packages/com.barmetler.roadsystem/Assets/Resources/Icons/Road.png
+Assets/CartoonTracksPack1/Track1/Textures/road_normal.png
+Assets/CartoonTracksPack1/Track1/Textures/road.psd
+
+# ArcGIS Maps SDK (this is a comment)
+
+/[Aa]ssets/[Ss]amples/ArcGIS Maps SDK for Unity* 
+Packages/com.esri.arcgis-maps-sdk/

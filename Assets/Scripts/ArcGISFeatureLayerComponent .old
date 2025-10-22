@@ -1,0 +1,221 @@
+﻿// Copyright 2025 Esri.
+//
+// Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at: http://www.apache.org/licenses/LICENSE-2.0
+//
+
+using Esri.ArcGISMapsSDK.Components;
+using Esri.ArcGISMapsSDK.Utils.GeoCoord;
+using Esri.GameEngine.Geometry;
+using Newtonsoft.Json.Linq;
+using System.Collections.Generic;
+using System.Collections;
+using System.Linq;
+using System;
+using UnityEngine.Networking;
+using UnityEngine;
+using UnityEngine.Splines;
+
+public class ArcGISFeatureLayerComponent : MonoBehaviour
+{
+    [System.Serializable]
+    public struct QueryLink
+    {
+        public string Link;
+        public string[] RequestHeaders;
+    }
+
+    [System.Serializable]
+    public class GeometryData
+    {
+        
+        public double Latitude;
+        public double Longitude;
+
+    }
+
+    [System.Serializable]
+    public class PropertyData
+    {
+        public List<string> PropertyNames = new List<string>();
+        public List<string> Data = new List<string>();
+    }
+
+    [System.Serializable]
+    public class FeatureQueryData
+    {
+        public GeometryData Geometry = new GeometryData();
+        public PropertyData Properties = new PropertyData();
+    }
+
+    private List<FeatureQueryData> Features = new List<FeatureQueryData>();
+   // private FeatureData featureInfo;
+    [SerializeField] private GameObject featurePrefab;
+    private JToken[] jFeatures;
+    private float spawnHeight = 0;
+
+    public List<GameObject> FeatureItems = new List<GameObject>();
+    public QueryLink WebLink;
+    [SerializeField] private SplineContainer splineContainer;
+    public ArcGISMapComponent mapComponent;
+
+    private void Start()
+    {
+        StartCoroutine(nameof(GetFeatures));
+        mapComponent = FindFirstObjectByType<ArcGISMapComponent>();
+    }
+
+    public void CreateLink(string link)
+    {
+        if (link != null)
+        {
+            foreach (var header in WebLink.RequestHeaders)
+            {
+                if (!link.ToLower().Contains(header))
+                {
+                    link += header;
+                }
+            }
+
+            WebLink.Link = link;
+        }
+    }
+
+    public IEnumerator GetFeatures()
+    {
+        // To learn more about the Feature Layer rest API and all the things that are possible checkout
+        // https://developers.arcgis.com/rest/services-reference/enterprise/query-feature-service-layer-.htm
+
+        UnityWebRequest Request = UnityWebRequest.Get(WebLink.Link);
+        yield return Request.SendWebRequest();
+
+        if (Request.result != UnityWebRequest.Result.Success)
+        {
+            Debug.Log(Request.error);
+        }
+        else
+        {
+            CreateGameObjectsFromResponse(Request.downloadHandler.text);
+        }
+    }
+
+    private void CreateGameObjectsFromResponse(string response)
+    {
+        // Deserialize the JSON response from the query.
+        var jObject = JObject.Parse(response);
+        jFeatures = jObject.SelectToken("features").ToArray();
+        CreateFeatures();
+    }
+
+    private void CreateFeatures()
+    {
+        foreach (var feature in jFeatures)
+        {
+            var geometry = feature.SelectToken("geometry");
+            if (geometry == null) continue;
+
+            var coordinates = geometry["coordinates"];
+            if (coordinates == null) continue;
+
+            // Parse CorectedFlood safely
+            var attributes = feature.SelectToken("properties");
+            double CorectedFlood = 0.0;
+            if (attributes != null && attributes["CorectedFlood"] != null)
+                double.TryParse(attributes["CorectedFlood"].ToString(), out CorectedFlood);
+
+            // Loop through each ring in the polygon
+            foreach (var ring in coordinates)
+            {
+                // Collect vertices in Unity coordinates
+                List<Vector3> baseVertices = new List<Vector3>();
+                foreach (var point in ring)
+                {
+                    double lon = point[0].Value<double>();
+                    double lat = point[1].Value<double>();
+
+                    // Use CorectedFlood as base height
+                    var position = new ArcGISPoint(lon, lat, CorectedFlood, new ArcGISSpatialReference(4326));
+                    Vector3 unityPos = mapComponent.GeographicToEngine(position);
+                    baseVertices.Add(unityPos);
+                }
+
+                // Build extruded mesh
+                GameObject polygonMesh = BuildExtrudedMesh(baseVertices, (float)CorectedFlood, 5f); // 5f = extrusion height
+                polygonMesh.transform.parent = this.transform;
+            }
+        }
+    }
+
+    // Helper method to add a point to the spline
+    private void AddSplinePoint(double longitude, double latitude)
+    {
+        var position = new ArcGISPoint(longitude, latitude, spawnHeight, new ArcGISSpatialReference(4326));
+        BezierKnot bezierKnot = new BezierKnot
+        {
+            Position = mapComponent.GeographicToEngine(position)
+        };
+        splineContainer.Splines[0].Add(bezierKnot);
+    }
+    private GameObject BuildExtrudedMesh(List<Vector3> baseVertices, float baseHeight, float extrusionHeight)
+    {
+        if (baseVertices.Count < 3) return null;
+
+        List<Vector3> vertices = new List<Vector3>();
+        List<int> triangles = new List<int>();
+
+        // Bottom vertices
+        int baseStart = 0;
+        vertices.AddRange(baseVertices);
+
+        // Top vertices
+        int topStart = vertices.Count;
+        foreach (var v in baseVertices)
+        {
+            vertices.Add(new Vector3(v.x, v.y + extrusionHeight, v.z));
+        }
+
+        // Triangulate top and bottom (simple fan)
+        for (int i = 1; i < baseVertices.Count - 1; i++)
+        {
+            // Bottom face
+            triangles.Add(baseStart);
+            triangles.Add(baseStart + i + 1);
+            triangles.Add(baseStart + i);
+
+            // Top face (reverse winding)
+            triangles.Add(topStart);
+            triangles.Add(topStart + i);
+            triangles.Add(topStart + i + 1);
+        }
+
+        // Build sides
+        for (int i = 0; i < baseVertices.Count; i++)
+        {
+            int next = (i + 1) % baseVertices.Count;
+
+            int b0 = baseStart + i;
+            int b1 = baseStart + next;
+            int t0 = topStart + i;
+            int t1 = topStart + next;
+
+            // Two triangles per side
+            triangles.Add(b0); triangles.Add(t0); triangles.Add(t1);
+            triangles.Add(b0); triangles.Add(t1); triangles.Add(b1);
+        }
+
+        Mesh mesh = new Mesh();
+        mesh.SetVertices(vertices);
+        mesh.SetTriangles(triangles, 0);
+        mesh.RecalculateNormals();
+
+        GameObject obj = new GameObject("ExtrudedPolygon");
+        var mf = obj.AddComponent<MeshFilter>();
+        var mr = obj.AddComponent<MeshRenderer>();
+        mf.mesh = mesh;
+        mr.material = new Material(Shader.Find("Standard")) { color = Color.green };
+
+        return obj;
+    }
+
+
+}
