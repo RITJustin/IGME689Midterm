@@ -5,3 +5,6 @@ I used the esri 3rd person template instead of a car to drive because I wanted t
 I found that while I could get this to work after many hours, the logic for the mesh collider for the flood elevation model does not operate the same way as a fixed elevation box collider.  
 Within the full bounds of the flood elevation collider, the person follows the rules of swimming, and when they leave the flood elevation bounds, reverts to walking. 
 I have spent many hours attempting to remedy this, and the only fix would negate the reason for using the custom elevation model for the flood.  
+
+When running the midterm scene, make sure to be on the ArcGISMap component in the hierarchy or there may be errors when attempting to run. 
+No idea why this works, but it just does.  
